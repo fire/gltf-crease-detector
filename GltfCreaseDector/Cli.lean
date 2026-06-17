@@ -52,6 +52,7 @@ structure Node where
 structure AnimSampler where
   input : Nat
   output : Nat
+  interpolation : String := "LINEAR"
   deriving Inhabited, Repr
 
 structure AnimChannel where
@@ -179,7 +180,9 @@ private def parseNode (j : Json) : Node :=
     children := jsonNatArr j "children", translation := let a := jsonFloatArr j "translation"; if a.size == 3 then a else #[0,0,0],
     rotation := let a := jsonFloatArr j "rotation"; if a.size == 4 then a else #[0,0,0,1],
     scale := let a := jsonFloatArr j "scale"; if a.size == 3 then a else #[1,1,1] }
-private def parseSampler (j : Json) : Option AnimSampler := do some { input := (← jsonNat? j "input"), output := (← jsonNat? j "output") }
+private def parseSampler (j : Json) : Option AnimSampler := do
+  some { input := (← jsonNat? j "input"), output := (← jsonNat? j "output"),
+         interpolation := (jsonStr? j "interpolation").getD "LINEAR" }
 private def parseChannel (j : Json) : Option AnimChannel := do
   let target ← jsonObj? j "target"; some { sampler := (← jsonNat? j "sampler"), targetNode := (← jsonNat? target "node"), path := (jsonStr? target "path").getD "" }
 private def parseAnimation (j : Json) : Animation :=
@@ -331,7 +334,11 @@ private def nodeWorldsAt (g : Glb) (time : Float) : Array Mat4 := Id.run do
         let width := comps outAcc.typeName
         if ts.size > 0 && width > 0 then
           let ki := nearestIndex ts time
-          let value := vals.extract (ki*width) (ki*width+width)
+          -- glTF CUBICSPLINE output accessor stores three elements per key:
+          -- [inTangent, value, outTangent]. For pose evaluation we need the
+          -- middle value, not the tangent. LINEAR/STEP store one element/key.
+          let sampleIndex := if smp.interpolation == "CUBICSPLINE" then ki*3 + 1 else ki
+          let value := vals.extract (sampleIndex*width) (sampleIndex*width+width)
           if ch.path == "translation" && value.size == 3 then trans := trans.insert ch.targetNode value
           else if ch.path == "rotation" && value.size == 4 then rot := rot.insert ch.targetNode value
           else if ch.path == "scale" && value.size == 3 then scl := scl.insert ch.targetNode value
