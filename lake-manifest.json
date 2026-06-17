@@ -1,0 +1,16 @@
+{"version": "1.2.0",
+ "packagesDir": ".lake/packages",
+ "packages":
+ [{"url": "https://github.com/fire/lean-gltf",
+   "type": "git",
+   "subDir": null,
+   "scope": "",
+   "rev": "00aefa844d4570d17491b9358aad70ff906bfd88",
+   "name": "«lean-gltf»",
+   "manifestFile": "lake-manifest.json",
+   "inputRev": "main",
+   "inherited": false,
+   "configFile": "lakefile.lean"}],
+ "name": "«glb-crease-detector»",
+ "lakeDir": ".lake",
+ "fixedToolchain": false}
