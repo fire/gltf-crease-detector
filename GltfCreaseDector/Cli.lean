@@ -372,6 +372,19 @@ private def nodeName (g : Glb) (i : Nat) :=
   | some n => if n.name == "" then s!"node_{i}" else n.name
   | none => s!"node_{i}"
 
+private def jointPairName (a b : String) : String :=
+  if a <= b then s!"{a} <-> {b}" else s!"{b} <-> {a}"
+
+private def isUpperArmTwist (s : String) : Bool :=
+  s.startsWith "LeftArmTwistHelper" || s.startsWith "RightArmTwistHelper"
+
+private def isTorsoShoulderArm (s : String) : Bool :=
+  s.startsWith "Spine" || s.startsWith "LeftShoulder" || s.startsWith "RightShoulder" ||
+  s.startsWith "LeftArm" || s.startsWith "RightArm"
+
+private def isTargetFitPair (a b : String) : Bool :=
+  (isUpperArmTwist a && isTorsoShoulderArm b) || (isUpperArmTwist b && isTorsoShoulderArm a)
+
 private def reportPrimitive (g : Glb) (times : Array Float) (nodeIdx meshIdx primIdx skinIdx : Nat) (p : Primitive) : IO Nat := do
   let some ja := p.joints | return 0
   let some wa := p.weights | return 0
@@ -394,7 +407,8 @@ private def reportPrimitive (g : Glb) (times : Array Float) (nodeIdx meshIdx pri
       match first[k]? with
       | none => first := first.insert k t
       | some t0 => baseAngles := baseAngles.insert k (angleDeg baseNormals[t0]! baseNormals[t]!)
-  let mut hits : Array (Float × String) := #[]
+  let mut hits : Array (Float × String × String) := #[]
+  let mut groups : Std.HashMap String (Nat × Float × String) := {}
   for fi in [:times.size] do
     let tm := times[fi]!
     let verts := skinVerts positions weights joints skin.joints ibms (nodeWorldsAt g tm)
@@ -416,11 +430,34 @@ private def reportPrimitive (g : Glb) (times : Array Float) (nodeIdx meshIdx pri
             let j0 := dominantJoint weights joints e.1; let j1 := dominantJoint weights joints e.2
             let n0 := if j0 < skin.joints.size then nodeName g skin.joints[j0]! else s!"joint_{j0}"
             let n1 := if j1 < skin.joints.size then nodeName g skin.joints[j1]! else s!"joint_{j1}"
-            hits := hits.push (delta, s!"frame={fi} time={tm} delta={delta}° angle={adeg}° base={bdeg}° node={nodeName g nodeIdx} mesh={meshIdx} prim={primIdx} edge={edgeIdx} v=({e.1},{e.2}) joints={n0} <-> {n1}")
+            -- Problem-specific clothing-fit signal: upper-arm twist-helper
+            -- discontinuities against torso/shoulder/upper-arm joints. This
+            -- intentionally ignores same-joint folds plus unrelated hands,
+            -- hips, feet, and finger creases so the report stays focused on
+            -- the arm/torso garment kink under investigation.
+            if n0 != n1 && isTargetFitPair n0 n1 then
+              let pair := jointPairName n0 n1
+              let line := s!"pair={pair} frame={fi} time={tm} delta={delta}° angle={adeg}° base={bdeg}° node={nodeName g nodeIdx} mesh={meshIdx} prim={primIdx} edge={edgeIdx} v=({e.1},{e.2})"
+              hits := hits.push (delta, pair, line)
+              match groups[pair]? with
+              | none => groups := groups.insert pair (1, delta, line)
+              | some old =>
+                let count := old.1 + 1
+                let bestDelta := old.2.1
+                let bestLine := old.2.2
+                if delta > bestDelta then groups := groups.insert pair (count, delta, line)
+                else groups := groups.insert pair (count, bestDelta, bestLine)
         edgeIdx := edgeIdx + 1
+  let sortedGroups := groups.toArray.qsort (fun a b =>
+    let av := a.2; let bv := b.2
+    if av.2.1 == bv.2.1 then av.1 > bv.1 else av.2.1 > bv.2.1)
   let sortedHits := hits.qsort (fun a b => a.1 > b.1)
-  IO.println s!"node={nodeName g nodeIdx} mesh={meshIdx} prim={primIdx} animated_crease_edges={sortedHits.size}"
-  for h in sortedHits.extract 0 (min 12 sortedHits.size) do IO.println s!"  {h.2}"
+  IO.println s!"node={nodeName g nodeIdx} mesh={meshIdx} prim={primIdx} upper_arm_clothing_fit_creases={sortedHits.size} joint_pairs={sortedGroups.size}"
+  IO.println "  joint_pair_summary: count max_delta_deg representative_witness"
+  for g0 in sortedGroups.extract 0 (min 8 sortedGroups.size) do
+    IO.println s!"  pair={g0.1} count={g0.2.1} max_delta={g0.2.2.1}° witness={g0.2.2.2}"
+  IO.println "  top_edge_witnesses:"
+  for h in sortedHits.extract 0 (min 12 sortedHits.size) do IO.println s!"  {h.2.2}"
   return sortedHits.size
 
 def run (path : System.FilePath) : IO Unit := do
@@ -436,7 +473,7 @@ def run (path : System.FilePath) : IO Unit := do
         let mesh := g.meshes[mi]!
         for pi in [:mesh.primitives.size] do total := total + (← reportPrimitive g times ni mi pi si mesh.primitives[pi]!)
     | _, _ => pure ()
-  IO.println s!"total_crease_edges={total}"
+  IO.println s!"total_upper_arm_clothing_fit_creases={total}"
 
 end GltfCreaseDector
 
